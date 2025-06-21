@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+torch
+numpy
+nibabel
+python-multipart
+requests
+streamlit
+matplotlib
