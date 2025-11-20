@@ -41,7 +41,7 @@ Reconstructs MRI volume to stabilize encoder features
 
 📉 Loss Functions Used
 
-Dice loss
-Cross entropy
-KL divergence (VAE)
-Reconstruction loss (VAE)
+-Dice loss
+-Cross entropy
+-KL divergence (VAE)
+-Reconstruction loss (VAE)
