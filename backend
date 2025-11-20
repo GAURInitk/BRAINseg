@@ -1,1 +1,64 @@
+import torch
+from fastapi import FastAPI, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
+import nibabel as nib
+import io
+from backend.attention_unet import BrainTumorSegModel
+import base64
+from fastapi.responses import StreamingResponse
 
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = BrainTumorSegModel().to(device)
+model = torch.nn.DataParallel(model)
+model.load_state_dict(torch.load("backend/best_model.pth", map_location=device))
+model.eval()
+
+@app.post("/predict/")
+async def predict(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    file3: UploadFile = File(...),
+    file4: UploadFile = File(...)
+):
+    print("Received files:", file1.filename, file2.filename, file3.filename, file4.filename)
+    np_arrays = []
+    for file in [file1, file2, file3, file4]:
+        contents = await file.read()
+        print(f"Read {len(contents)} bytes from {file.filename}")
+        try:
+            # Use FileHolder and from_file_map to read from bytes
+            file_map = nib.Nifti1Image.make_file_map()
+            file_map['image'].fileobj = io.BytesIO(contents)
+            nii_img = nib.Nifti1Image.from_file_map(file_map)
+            arr = nii_img.get_fdata()
+            arr = np.asarray(arr, dtype=np.float32)
+            print(f"{file.filename} shape: {arr.shape}")
+        except Exception as e:
+            print(f"Error loading {file.filename}: {e}")
+            return {"error": f"Could not load {file.filename}: {e}"}
+        if arr.shape != (128, 128, 128):
+            print(f"Shape error: {arr.shape}")
+            return {"error": f"File {file.filename} has incorrect shape {arr.shape}, expected (128, 128, 128)"}
+        np_arrays.append(arr)
+    print("Stacking arrays and running model...")
+    stacked = np.stack(np_arrays, axis=0)
+    input_tensor = torch.tensor(stacked, dtype=torch.float32).unsqueeze(0).to(device)
+    with torch.no_grad():
+        seg_out, recon_out, mu, logvar = model(input_tensor)
+    seg_out_np = seg_out.cpu().numpy().tolist()
+    print("Returning result")
+    buffer = io.BytesIO()
+    np.save(buffer, seg_out_np)
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/octet-stream", headers={"Content-Disposition": "attachment; filename=segmentation.npy"})
